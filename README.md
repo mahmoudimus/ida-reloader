@@ -2,8 +2,7 @@
 
 ## How to use
 
-```
-
+```python
 import ida_hexrays
 import ida_kernwin
 import idaapi

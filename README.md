@@ -1,5 +1,7 @@
 # IDA Reloader
 
+Special thanks to [@w00tzenheimer](https://github.com/w00tzenheimer) [`d810-ng`](https://github.com/w00tzenheimer/d810-ng) project that showed this very elegant pattern.
+
 ## How to use
 
 ```python

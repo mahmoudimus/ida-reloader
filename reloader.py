@@ -17,10 +17,48 @@ import importlib.machinery
 import importlib.util
 import pathlib
 import pkgutil
+import platform
 import sys
 import time
 import typing
 from collections.abc import Iterable, Sequence
+
+
+if not hasattr(typing, "override"):
+    F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
+    def override(fn: F, /) -> F:
+        return fn
+
+
+def overrides(parent_class):
+    """Simple decorator that checks that a method with the same name exists in the parent class"""
+    # I tried typing.override (Python 3.12+), but support for it does not seem to be ideal (yet)
+    # and portability also is an issue. https://github.com/google/pytype/issues/1915 Maybe in 3 years.
+
+    def overrider(method):
+        if platform.python_implementation() == 'PyPy':
+            return method
+
+        assert method.__name__ in dir(parent_class)
+        parent_method = getattr(parent_class, method.__name__)
+        assert callable(parent_method)
+
+        if os.getenv('CHECK_OVERRIDES', '').lower() not in ('1', 'yes', 'on', 'enable', 'enabled'):
+            return method
+
+        # Example return of get_type_hints:
+        # {'path': <class 'str'>,
+        #  'return': typing.Union[typing.Iterable[str], typing.Dict[str, bytes, NoneType]}
+        parent_types = typing.get_type_hints(parent_method)
+        # If the parent is not typed, then do not show errors for the typed derived class.
+        for argument, argument_type in typing.get_type_hints(method).items():
+            if argument in parent_types:
+                parent_type = parent_types[argument]
+                assert argument_type == parent_type, f"{method.__name__}: {argument}: {argument_type} != {parent_type}"
+
+        return method
+
+    return overrider
 
 
 class DependencyGraph:
@@ -577,4 +615,102 @@ class Reloader:
             plugin.unload()
         yield
         self.reload_all()
-        plugin.load(
+        plugin.load()
+
+
+
+class Plugin(abc.ABC):
+
+    @abc.abstractmethod
+    def init(self): ...
+
+    @override
+    @abc.abstractmethod
+    def run(self, args): ...
+
+    @override
+    @abc.abstractmethod
+    def term(self): ...
+
+
+class LateInitPlugin(Plugin):
+
+    def __init__(self, hook_cls: "idaapi.UI_Hooks", skip_code: int, ok_code: int):
+        super().__init__()
+        self._skip_code = skip_code
+        self._ok_code = ok_code
+        self._ui_hooks: "idaapi.UI_Hooks" = hook_cls()
+
+    @override
+    def init(self):
+        self._ui_hooks.ready_to_run = self.ready_to_run
+        if not self._ui_hooks.hook():
+            print("LateInitPlugin.__init__ hooking failed!", file=sys.stderr)
+            return self._skip_code
+        return self._ok_code
+
+    def ready_to_run(self):
+        self.late_init()
+        self._ui_hooks.unhook()
+
+    @abc.abstractmethod
+    def late_init(self): ...
+
+
+class ReloadablePluginBase(LateInitPlugin):
+    def __init__(
+        self,
+        *,
+        global_name: str,
+        base_package_name: str,
+        plugin_class: str,
+        hook_cls: "idaapi.UI_Hooks",
+        skip_code: int,
+        ok_code: int,
+    ):
+        super().__init__(hook_cls, skip_code, int_code)
+        self.global_name = global_name
+        self.base_package_name = base_package_name
+        self.plugin_class = plugin_class
+        self.plugin = self._import_plugin_cls()
+
+    def _import_plugin_cls(self):
+        self.plugin_module, self.plugin_class_name = self.plugin_class.rsplit(".", 1)
+        mod = importlib.import_module(self.plugin_module)
+        return getattr(mod, self.plugin_class_name)()
+
+    @override
+    def late_init(self):
+        self.add_plugin_to_console()
+        self.register_reload_action()
+
+    @override
+    def term(self):
+        self.unregister_reload_action()
+        if self.plugin is not None and hasattr(self.plugin, "unload"):
+            self.plugin.unload()
+            
+    def add_plugin_to_console(self):
+        # add plugin to the IDA python console scope, for test/dev/cli access
+        setattr(sys.modules["__main__"], self.global_name, self)
+
+    @contextlib.contextmanager
+    def plugin_setup_reload(self):
+        """Hot-reload the plugin core."""
+        # Unload existing plugin if loaded
+        if self.plugin.is_loaded():
+            self.unregister_reload_action()
+            self.term()
+            self.plugin = self._import_plugin_cls()
+            self.plugin.reset()
+
+        yield
+
+        # Re-register action and load plugin
+        self.register_reload_action()
+        print(f"{self.global_name} reloading...")
+        self.add_plugin_to_console()
+        self.plugin.load()
+
+    @abc.abstractmethod
+    def reload(self): ...

@@ -6,9 +6,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch, call
 
-# Import from parent directory
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
 from ida_reloader import reload_package
 
 
@@ -59,7 +56,7 @@ class TestReloadPackage(unittest.TestCase):
             import test_reload_pkg
 
             # Mock the internal reload function
-            with patch('ida_reloader._reload_package_with_graph') as mock_reload:
+            with patch('ida_reloader.ida_reloader._reload_package_with_graph') as mock_reload:
                 reload_package("test_reload_pkg")
 
                 # Check that internal reload was called
@@ -80,7 +77,7 @@ class TestReloadPackage(unittest.TestCase):
             import test_reload_pkg
 
             # Mock the internal reload function
-            with patch('ida_reloader._reload_package_with_graph') as mock_reload:
+            with patch('ida_reloader.ida_reloader._reload_package_with_graph') as mock_reload:
                 reload_package(test_reload_pkg)
 
                 # Check that internal reload was called
@@ -112,7 +109,7 @@ class TestReloadPackage(unittest.TestCase):
             import test_reload_pkg
 
             # Mock the internal reload function
-            with patch('ida_reloader._reload_package_with_graph') as mock_reload:
+            with patch('ida_reloader.ida_reloader._reload_package_with_graph') as mock_reload:
                 reload_package("test_reload_pkg", skip=["test_reload_pkg.vendor"])
 
                 # Check that skip was passed correctly
@@ -133,7 +130,7 @@ class TestReloadPackage(unittest.TestCase):
             import test_reload_pkg
 
             # Mock the internal reload function
-            with patch('ida_reloader._reload_package_with_graph') as mock_reload:
+            with patch('ida_reloader.ida_reloader._reload_package_with_graph') as mock_reload:
                 reload_package("test_reload_pkg", suppress_errors=True)
 
                 # Check that suppress_errors was passed correctly

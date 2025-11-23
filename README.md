@@ -12,6 +12,40 @@ Special thanks to [@w00tzenheimer](https://github.com/w00tzenheimer) [`d810-ng`]
 - **Advanced control**: `Reloader` class for priority-based reloading and custom workflows
 - **Reloadable infrastructure**: The reloader itself can be reloaded without losing state
 
+## Installation
+
+### Option 1: Install from PyPI (Recommended)
+
+```bash
+pip install ida-reloader
+```
+
+### Option 2: Install from Source
+
+```bash
+git clone https://github.com/mahmoudimus/ida-reloader.git
+cd ida-reloader
+pip install -e .
+```
+
+### Option 3: Standalone File (No Installation)
+
+For quick integration without installing a package, you can copy the standalone `ida_reloader.py` file directly into your project:
+
+1. Download the latest release from [GitHub Releases](https://github.com/mahmoudimus/ida-reloader/releases)
+2. Copy `ida_reloader.py` to your project directory
+3. Import and use directly:
+
+```python
+import ida_reloader
+ida_reloader.reload_package(my_package)
+```
+
+This option is useful for:
+- IDA Pro plugin development where you want a single file
+- Projects that can't install external dependencies
+- Quick prototyping and testing
+
 ## Quick Start
 
 ### Simple Package Reloading

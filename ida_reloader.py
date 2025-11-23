@@ -9,12 +9,16 @@ reloads this module, it should create a new Reloader instance to pick up
 the newly loaded class definition.
 """
 
+__version__ = "0.1.0"
+
+import abc
 import ast
 import bisect
 import contextlib
 import importlib
 import importlib.machinery
 import importlib.util
+import os
 import pathlib
 import pkgutil
 import platform

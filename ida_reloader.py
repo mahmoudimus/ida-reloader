@@ -29,7 +29,10 @@ import typing
 from collections.abc import Iterable, Sequence
 
 
-if not hasattr(typing, "override"):
+# Handle override decorator for Python 3.10/3.11 compatibility
+if hasattr(typing, "override"):
+    override = typing.override
+else:
     F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
     def override(fn: F, /) -> F:
         return fn

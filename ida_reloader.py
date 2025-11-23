@@ -20,6 +20,7 @@ import pkgutil
 import platform
 import sys
 import time
+import types
 import typing
 from collections.abc import Iterable, Sequence
 
@@ -509,7 +510,7 @@ class _Scanner:
             cls._load_module(spec, callback)
 
 
-def reload_package_with_graph(
+def _reload_package_with_graph(
     pkg_path: Iterable[str],
     base_package: str,
     skip_prefixes: tuple[str, ...] = (),
@@ -518,7 +519,7 @@ def reload_package_with_graph(
     """
     Hot-reload an entire package using dependency graph analysis.
 
-    This standalone function:
+    This internal function:
     1. Scans all modules in the package and builds a dependency graph
     2. Detects strongly-connected components (import cycles)
     3. Produces a topological order respecting dependencies
@@ -585,6 +586,87 @@ def reload_package_with_graph(
                 print(f"[{base_package}][reload] suppressed {e}")
             else:
                 raise
+
+
+def reload_package(
+    target: str | types.ModuleType,
+    *,
+    skip: Sequence[str] = (),
+    suppress_errors: bool = False,
+) -> None:
+    """
+    Recursively reload a package and its submodules in dependency order.
+
+    This function provides a convenient interface for hot-reloading packages.
+    It automatically handles dependency tracking and ensures modules are
+    reloaded in the correct order to avoid stale references.
+
+    Parameters
+    ----------
+    target : str | types.ModuleType
+        The package name (str) or the module object to reload.
+        Examples:
+            - reload_package("mypackage")
+            - import mypackage; reload_package(mypackage)
+    skip : Sequence[str]
+        A list of submodule prefixes to exclude from reloading.
+        Example: skip=['mypackage.vendor', 'mypackage.legacy']
+    suppress_errors : bool
+        If True, ignore ModuleNotFoundError during reload.
+
+    Raises
+    ------
+    ImportError
+        If the target package is not loaded and cannot be imported.
+
+    Examples
+    --------
+    >>> import mypackage
+    >>> reload_package(mypackage)
+    >>> # Or by name:
+    >>> reload_package("mypackage", skip=["mypackage.vendor"])
+
+    Notes
+    -----
+    - If the target is a single module (not a package), performs a simple reload.
+    - For packages, uses dependency graph analysis to ensure correct reload order.
+    - Detects and reports circular import dependencies.
+    """
+    # Resolve target to a module object
+    if isinstance(target, str):
+        if target not in sys.modules:
+            # If it's not in sys.modules, try to import it first
+            try:
+                target_module = importlib.import_module(target)
+            except ImportError:
+                print(f"Error: Package '{target}' is not loaded. Cannot reload.")
+                return
+        else:
+            target_module = sys.modules[target]
+    else:
+        target_module = target
+
+    # Validate that it is a package (has __path__)
+    if not hasattr(target_module, "__path__"):
+        # If it's just a single file module, standard reload is sufficient
+        print(
+            f"'{target_module.__name__}' is a single module, not a package. "
+            f"Performing simple reload."
+        )
+        importlib.reload(target_module)
+        return
+
+    # Extract arguments required by the internal graph reloader
+    pkg_path = target_module.__path__
+    base_package_name = target_module.__name__
+
+    # Delegate to the graph reloader
+    _reload_package_with_graph(
+        pkg_path=pkg_path,
+        base_package=base_package_name,
+        skip_prefixes=tuple(skip),
+        suppress_errors=suppress_errors,
+    )
 
 
 class Reloader:

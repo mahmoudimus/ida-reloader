@@ -9,22 +9,30 @@ reloads this module, it should create a new Reloader instance to pick up
 the newly loaded class definition.
 """
 
+__version__ = "0.1.0"
+
+import abc
 import ast
 import bisect
 import contextlib
 import importlib
 import importlib.machinery
 import importlib.util
+import os
 import pathlib
 import pkgutil
 import platform
 import sys
 import time
+import types
 import typing
 from collections.abc import Iterable, Sequence
 
 
-if not hasattr(typing, "override"):
+# Handle override decorator for Python 3.10/3.11 compatibility
+if hasattr(typing, "override"):
+    override = typing.override
+else:
     F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
     def override(fn: F, /) -> F:
         return fn
@@ -507,6 +515,165 @@ class _Scanner:
                 continue
 
             cls._load_module(spec, callback)
+
+
+def _reload_package_with_graph(
+    pkg_path: Iterable[str],
+    base_package: str,
+    skip_prefixes: tuple[str, ...] = (),
+    suppress_errors: bool = False,
+) -> None:
+    """
+    Hot-reload an entire package using dependency graph analysis.
+
+    This internal function:
+    1. Scans all modules in the package and builds a dependency graph
+    2. Detects strongly-connected components (import cycles)
+    3. Produces a topological order respecting dependencies
+    4. Reloads modules in that order
+
+    Parameters
+    ----------
+    pkg_path : Iterable[str]
+        Package search paths (e.g., mypackage.__path__)
+    base_package : str
+        Base package name (e.g., "mypackage")
+    skip_prefixes : tuple[str, ...]
+        Module name prefixes to skip during reload
+    suppress_errors : bool
+        Whether to suppress ModuleNotFoundError during reload
+
+    Notes
+    -----
+    This ensures all in-package dependencies are reloaded before the code
+    that relies on them. Modules whose names match skip_prefixes are excluded
+    from reloading.
+    """
+    # Build dependency graph
+    dg = DependencyGraph(base_package + ".")
+
+    # Scan and discover all modules in the package
+    def update_deps(module):
+        if file_path := getattr(module, "__file__", None):
+            dg.update_dependencies(file_path, module.__name__)
+
+    _Scanner.scan(
+        pkg_path,
+        base_package + ".",
+        callback=update_deps,
+        skip_packages=False,
+    )
+
+    # Get topological order, skipping specified prefixes
+    skip_set = set(
+        name
+        for name in sys.modules
+        if any(name.startswith(prefix) for prefix in skip_prefixes)
+    )
+    order = dg.topo_order(skip=skip_set)
+
+    # Detect and report cycles
+    cycles = dg.get_cycles()
+    if cycles:
+        core_cycles = [", ".join(sorted(c)) for c in cycles]
+        print(
+            f"[{base_package}][reload] WARNING: cyclic import groups detected:\n  "
+            + "\n  ".join(core_cycles)
+        )
+
+    # Reload all modules in dependency order
+    for name in order:
+        if name not in sys.modules:
+            continue
+        try:
+            print(f"Reloading {name} ...")
+            importlib.reload(sys.modules[name])
+        except ModuleNotFoundError as e:
+            if suppress_errors:
+                print(f"[{base_package}][reload] suppressed {e}")
+            else:
+                raise
+
+
+def reload_package(
+    target: str | types.ModuleType,
+    *,
+    skip: Sequence[str] = (),
+    suppress_errors: bool = False,
+) -> None:
+    """
+    Recursively reload a package and its submodules in dependency order.
+
+    This function provides a convenient interface for hot-reloading packages.
+    It automatically handles dependency tracking and ensures modules are
+    reloaded in the correct order to avoid stale references.
+
+    Parameters
+    ----------
+    target : str | types.ModuleType
+        The package name (str) or the module object to reload.
+        Examples:
+            - reload_package("mypackage")
+            - import mypackage; reload_package(mypackage)
+    skip : Sequence[str]
+        A list of submodule prefixes to exclude from reloading.
+        Example: skip=['mypackage.vendor', 'mypackage.legacy']
+    suppress_errors : bool
+        If True, ignore ModuleNotFoundError during reload.
+
+    Raises
+    ------
+    ImportError
+        If the target package is not loaded and cannot be imported.
+
+    Examples
+    --------
+    >>> import mypackage
+    >>> reload_package(mypackage)
+    >>> # Or by name:
+    >>> reload_package("mypackage", skip=["mypackage.vendor"])
+
+    Notes
+    -----
+    - If the target is a single module (not a package), performs a simple reload.
+    - For packages, uses dependency graph analysis to ensure correct reload order.
+    - Detects and reports circular import dependencies.
+    """
+    # Resolve target to a module object
+    if isinstance(target, str):
+        if target not in sys.modules:
+            # If it's not in sys.modules, try to import it first
+            try:
+                target_module = importlib.import_module(target)
+            except ImportError:
+                print(f"Error: Package '{target}' is not loaded. Cannot reload.")
+                return
+        else:
+            target_module = sys.modules[target]
+    else:
+        target_module = target
+
+    # Validate that it is a package (has __path__)
+    if not hasattr(target_module, "__path__"):
+        # If it's just a single file module, standard reload is sufficient
+        print(
+            f"'{target_module.__name__}' is a single module, not a package. "
+            f"Performing simple reload."
+        )
+        importlib.reload(target_module)
+        return
+
+    # Extract arguments required by the internal graph reloader
+    pkg_path = target_module.__path__
+    base_package_name = target_module.__name__
+
+    # Delegate to the graph reloader
+    _reload_package_with_graph(
+        pkg_path=pkg_path,
+        base_package=base_package_name,
+        skip_prefixes=tuple(skip),
+        suppress_errors=suppress_errors,
+    )
 
 
 class Reloader:

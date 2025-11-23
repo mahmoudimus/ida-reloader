@@ -509,6 +509,84 @@ class _Scanner:
             cls._load_module(spec, callback)
 
 
+def reload_package_with_graph(
+    pkg_path: Iterable[str],
+    base_package: str,
+    skip_prefixes: tuple[str, ...] = (),
+    suppress_errors: bool = False,
+) -> None:
+    """
+    Hot-reload an entire package using dependency graph analysis.
+
+    This standalone function:
+    1. Scans all modules in the package and builds a dependency graph
+    2. Detects strongly-connected components (import cycles)
+    3. Produces a topological order respecting dependencies
+    4. Reloads modules in that order
+
+    Parameters
+    ----------
+    pkg_path : Iterable[str]
+        Package search paths (e.g., mypackage.__path__)
+    base_package : str
+        Base package name (e.g., "mypackage")
+    skip_prefixes : tuple[str, ...]
+        Module name prefixes to skip during reload
+    suppress_errors : bool
+        Whether to suppress ModuleNotFoundError during reload
+
+    Notes
+    -----
+    This ensures all in-package dependencies are reloaded before the code
+    that relies on them. Modules whose names match skip_prefixes are excluded
+    from reloading.
+    """
+    # Build dependency graph
+    dg = DependencyGraph(base_package + ".")
+
+    # Scan and discover all modules in the package
+    def update_deps(module):
+        if file_path := getattr(module, "__file__", None):
+            dg.update_dependencies(file_path, module.__name__)
+
+    _Scanner.scan(
+        pkg_path,
+        base_package + ".",
+        callback=update_deps,
+        skip_packages=False,
+    )
+
+    # Get topological order, skipping specified prefixes
+    skip_set = set(
+        name
+        for name in sys.modules
+        if any(name.startswith(prefix) for prefix in skip_prefixes)
+    )
+    order = dg.topo_order(skip=skip_set)
+
+    # Detect and report cycles
+    cycles = dg.get_cycles()
+    if cycles:
+        core_cycles = [", ".join(sorted(c)) for c in cycles]
+        print(
+            f"[{base_package}][reload] WARNING: cyclic import groups detected:\n  "
+            + "\n  ".join(core_cycles)
+        )
+
+    # Reload all modules in dependency order
+    for name in order:
+        if name not in sys.modules:
+            continue
+        try:
+            print(f"Reloading {name} ...")
+            importlib.reload(sys.modules[name])
+        except ModuleNotFoundError as e:
+            if suppress_errors:
+                print(f"[{base_package}][reload] suppressed {e}")
+            else:
+                raise
+
+
 class Reloader:
     """
     Hot-reload manager for a package, with priority-based reload ordering.

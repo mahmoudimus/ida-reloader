@@ -24,16 +24,17 @@ import pkgutil
 import platform
 import sys
 import time
+import traceback
 import types
 import typing
 from collections.abc import Iterable, Sequence
-
 
 # Handle override decorator for Python 3.10/3.11 compatibility
 if hasattr(typing, "override"):
     override = typing.override
 else:
     F = typing.TypeVar("F", bound=typing.Callable[..., typing.Any])
+
     def override(fn: F, /) -> F:
         return fn
 
@@ -44,14 +45,20 @@ def overrides(parent_class):
     # and portability also is an issue. https://github.com/google/pytype/issues/1915 Maybe in 3 years.
 
     def overrider(method):
-        if platform.python_implementation() == 'PyPy':
+        if platform.python_implementation() == "PyPy":
             return method
 
         assert method.__name__ in dir(parent_class)
         parent_method = getattr(parent_class, method.__name__)
         assert callable(parent_method)
 
-        if os.getenv('CHECK_OVERRIDES', '').lower() not in ('1', 'yes', 'on', 'enable', 'enabled'):
+        if os.getenv("CHECK_OVERRIDES", "").lower() not in (
+            "1",
+            "yes",
+            "on",
+            "enable",
+            "enabled",
+        ):
             return method
 
         # Example return of get_type_hints:
@@ -62,7 +69,9 @@ def overrides(parent_class):
         for argument, argument_type in typing.get_type_hints(method).items():
             if argument in parent_types:
                 parent_type = parent_types[argument]
-                assert argument_type == parent_type, f"{method.__name__}: {argument}: {argument_type} != {parent_type}"
+                assert (
+                    argument_type == parent_type
+                ), f"{method.__name__}: {argument}: {argument_type} != {parent_type}"
 
         return method
 
@@ -482,7 +491,7 @@ class _Scanner:
             except BaseException as e:  # //NOSONAR
                 sys.modules.pop(module.__name__)
                 print(
-                    f"Error while loading extension {spec.name}: {e}",
+                    f"Error while loading extension {spec.name} - {e}\n{traceback.format_exc()}",
                     file=sys.stderr,
                 )
                 return
@@ -785,7 +794,6 @@ class Reloader:
         plugin.load()
 
 
-
 class Plugin(abc.ABC):
 
     @abc.abstractmethod
@@ -835,7 +843,7 @@ class ReloadablePluginBase(LateInitPlugin):
         skip_code: int,
         ok_code: int,
     ):
-        super().__init__(hook_cls, skip_code, int_code)
+        super().__init__(hook_cls, skip_code, ok_code)
         self.global_name = global_name
         self.base_package_name = base_package_name
         self.plugin_class = plugin_class
@@ -856,7 +864,7 @@ class ReloadablePluginBase(LateInitPlugin):
         self.unregister_reload_action()
         if self.plugin is not None and hasattr(self.plugin, "unload"):
             self.plugin.unload()
-            
+
     def add_plugin_to_console(self):
         # add plugin to the IDA python console scope, for test/dev/cli access
         setattr(sys.modules["__main__"], self.global_name, self)
